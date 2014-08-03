@@ -14,14 +14,25 @@
 /provision/provision-pre.sh
 /provision/provision-post.sh
 
+# Ignore custom trigger scripts in config/homebin.
+/config/homebin/vagrant_halt_custom
+/config/homebin/vagrant_suspend_custom
+/config/homebin/vagrant_destroy_custom
+
 # No need to share individual site configs with each other
 /config/nginx-config/sites/*.conf
 
 # Ignore anything in the 'custom' directory in config
 /config/custom/*
 
+# Ignore a custom bash_prompt if it exists
+/config/bash_prompt
+
 # No need to share our mysql data with each other
 /database/data/*
+
+# Log files should be ignored.
+/log/*.log
 
 # No need to share our individual sites with each other
 /www/*

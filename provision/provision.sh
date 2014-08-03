@@ -50,7 +50,6 @@ apt_package_check_list=(
 	# Extra PHP modules that we find useful
 	php5-memcache
 	php5-imagick
-	php5-xdebug
 	php5-mcrypt
 	php5-mysql
 	php5-imap
@@ -148,18 +147,6 @@ if [[ $ping_result == *bytes?from* ]]; then
 		gpg -q --keyserver keyserver.ubuntu.com --recv-key ABF5BD827BD9BF62
 		gpg -q -a --export ABF5BD827BD9BF62 | apt-key add -
 
-		# Launchpad Subversion key EAA903E3A2F4C039
-		gpg -q --keyserver keyserver.ubuntu.com --recv-key EAA903E3A2F4C039
-		gpg -q -a --export EAA903E3A2F4C039 | apt-key add -
-
-		# Launchpad PHP key 4F4EA0AAE5267A6C
-		gpg -q --keyserver keyserver.ubuntu.com --recv-key 4F4EA0AAE5267A6C
-		gpg -q -a --export 4F4EA0AAE5267A6C | apt-key add -
-
-		# Launchpad git key A1715D88E1DF1F24
-		gpg -q --keyserver keyserver.ubuntu.com --recv-key A1715D88E1DF1F24
-		gpg -q -a --export A1715D88E1DF1F24 | apt-key add -
-
 		# Launchpad nodejs key C7917B12
 		gpg -q --keyserver keyserver.ubuntu.com --recv-key C7917B12
 		gpg -q -a --export  C7917B12  | apt-key add -
@@ -175,6 +162,16 @@ if [[ $ping_result == *bytes?from* ]]; then
 		# Clean up apt caches
 		apt-get clean
 	fi
+
+	# Make sure we have the latest npm version
+	npm install -g npm
+
+	# xdebug
+	#
+	# XDebug 2.2.3 is provided with the Ubuntu install by default. The PECL
+	# installation allows us to use a later version. Not specifying a version
+	# will load the latest stable.
+	pecl install xdebug
 
 	# ack-grep
 	#
@@ -268,13 +265,17 @@ cp /srv/config/php5-fpm-config/php5-fpm.conf /etc/php5/fpm/php5-fpm.conf
 cp /srv/config/php5-fpm-config/www.conf /etc/php5/fpm/pool.d/www.conf
 cp /srv/config/php5-fpm-config/php-custom.ini /etc/php5/fpm/conf.d/php-custom.ini
 cp /srv/config/php5-fpm-config/opcache.ini /etc/php5/fpm/conf.d/opcache.ini
-cp /srv/config/php5-fpm-config/xdebug.ini /etc/php5/fpm/conf.d/xdebug.ini
+cp /srv/config/php5-fpm-config/xdebug.ini /etc/php5/mods-available/xdebug.ini
+
+# Find the path to Xdebug and prepend it to xdebug.ini
+XDEBUG_PATH=$( find /usr -name 'xdebug.so' | head -1 )
+sed -i "1izend_extension=\"$XDEBUG_PATH\"" /etc/php5/mods-available/xdebug.ini
 
 echo " * /srv/config/php5-fpm-config/php5-fpm.conf     -> /etc/php5/fpm/php5-fpm.conf"
 echo " * /srv/config/php5-fpm-config/www.conf          -> /etc/php5/fpm/pool.d/www.conf"
 echo " * /srv/config/php5-fpm-config/php-custom.ini    -> /etc/php5/fpm/conf.d/php-custom.ini"
 echo " * /srv/config/php5-fpm-config/opcache.ini       -> /etc/php5/fpm/conf.d/opcache.ini"
-echo " * /srv/config/php5-fpm-config/xdebug.ini        -> /etc/php5/fpm/conf.d/xdebug.ini"
+echo " * /srv/config/php5-fpm-config/xdebug.ini        -> /etc/php5/mods-available/xdebug.ini"
 
 # Copy memcached configuration from local
 cp /srv/config/memcached-config/memcached.conf /etc/memcached.conf
@@ -299,6 +300,12 @@ echo " * /srv/config/bash_aliases                      -> /home/vagrant/.bash_al
 echo " * /srv/config/vimrc                             -> /home/vagrant/.vimrc"
 echo " * /srv/config/subversion-servers                -> /home/vagrant/.subversion/servers"
 echo " * /srv/config/homebin                           -> /home/vagrant/bin"
+
+# If a bash_prompt file exists in the VVV config/ directory, copy to the VM.
+if [[ -f /srv/config/bash_prompt ]]; then
+	cp /srv/config/bash_prompt /home/vagrant/.bash_prompt
+	echo " * /srv/config/bash_prompt                       -> /home/vagrant/.bash_prompt"
+fi
 
 # RESTART SERVICES
 #
@@ -355,6 +362,11 @@ if [[ "mysql: unrecognized service" != "${exists_mysql}" ]]; then
 	/srv/database/import-sql.sh
 else
 	echo -e "\nMySQL is not installed. No databases imported."
+fi
+
+# Run wp-cli as vagrant user
+if (( $EUID == 0 )); then
+    wp() { sudo -EH -u vagrant -- wp "$@"; }
 fi
 
 if [[ $ping_result == *bytes?from* ]]; then
@@ -447,15 +459,24 @@ if [[ $ping_result == *bytes?from* ]]; then
 		rm latest.tar.gz
 		cd /srv/www/wordpress-default
 		echo "Configuring WordPress Stable..."
-		wp core config --dbname=wordpress_default --dbuser=wp --dbpass=wp --quiet --extra-php --allow-root <<PHP
+		wp core config --dbname=wordpress_default --dbuser=wp --dbpass=wp --quiet --extra-php <<PHP
 define( 'WP_DEBUG', true );
 PHP
-		wp core install --url=local.wordpress.dev --quiet --title="Local WordPress Dev" --admin_name=admin --admin_email="admin@local.dev" --admin_password="password" --allow-root 
+		wp core install --url=local.wordpress.dev --quiet --title="Local WordPress Dev" --admin_name=admin --admin_email="admin@local.dev" --admin_password="password"
 	else
 		echo "Updating WordPress Stable..."
 		cd /srv/www/wordpress-default
-		wp core upgrade --allow-root 
+		wp core upgrade
 	fi
+
+	# Test to see if an svn upgrade is needed
+	svn_test=$( svn status -u /srv/www/wordpress-develop/ 2>&1 );
+	if [[ $svn_test == *"svn upgrade"* ]]; then
+		# If the wordpress-develop svn repo needed an upgrade, they probably all need it
+		for repo in $(find /srv/www -maxdepth 5 -type d -name '.svn'); do
+			svn upgrade "${repo/%\.svn/}"
+		done
+	fi;
 
 	# Checkout, install and configure WordPress trunk via core.svn
 	if [[ ! -d /srv/www/wordpress-trunk ]]; then
@@ -463,10 +484,10 @@ PHP
 		svn checkout http://core.svn.wordpress.org/trunk/ /srv/www/wordpress-trunk
 		cd /srv/www/wordpress-trunk
 		echo "Configuring WordPress trunk..."
-		wp core config --dbname=wordpress_trunk --dbuser=wp --dbpass=wp --quiet --extra-php --allow-root <<PHP
+		wp core config --dbname=wordpress_trunk --dbuser=wp --dbpass=wp --quiet --extra-php <<PHP
 define( 'WP_DEBUG', true );
 PHP
-		wp core install --url=local.wordpress-trunk.dev --quiet --title="Local WordPress Trunk Dev" --admin_name=admin --admin_email="admin@local.dev" --admin_password="password" --allow-root 
+		wp core install --url=local.wordpress-trunk.dev --quiet --title="Local WordPress Trunk Dev" --admin_name=admin --admin_email="admin@local.dev" --admin_password="password"
 	else
 		echo "Updating WordPress trunk..."
 		cd /srv/www/wordpress-trunk
@@ -479,7 +500,7 @@ PHP
 		svn checkout http://develop.svn.wordpress.org/trunk/ /srv/www/wordpress-develop
 		cd /srv/www/wordpress-develop/src/
 		echo "Configuring WordPress develop..."
-		wp core config --dbname=wordpress_develop --dbuser=wp --dbpass=wp --quiet --extra-php --allow-root <<PHP
+		wp core config --dbname=wordpress_develop --dbuser=wp --dbpass=wp --quiet --extra-php <<PHP
 // Allow (src|build).wordpress-develop.dev to share the same database
 if ( 'build' == basename( dirname( __FILE__) ) ) {
 	define( 'WP_HOME', 'http://build.wordpress-develop.dev' );
@@ -488,7 +509,7 @@ if ( 'build' == basename( dirname( __FILE__) ) ) {
 
 define( 'WP_DEBUG', true );
 PHP
-		wp core install --url=src.wordpress-develop.dev --quiet --title="WordPress Develop" --admin_name=admin --admin_email="admin@local.dev" --admin_password="password" --allow-root 
+		wp core install --url=src.wordpress-develop.dev --quiet --title="WordPress Develop" --admin_name=admin --admin_email="admin@local.dev" --admin_password="password"
 		cp /srv/config/wordpress-config/wp-tests-config.php /srv/www/wordpress-develop/
 		cd /srv/www/wordpress-develop/
 		npm install &>/dev/null
@@ -515,11 +536,11 @@ PHP
 
 	# Download phpMyAdmin
 	if [[ ! -d /srv/www/default/database-admin ]]; then
-		echo "Downloading phpMyAdmin 4.1.12..."
+		echo "Downloading phpMyAdmin 4.1.14..."
 		cd /srv/www/default
-		wget -q -O phpmyadmin.tar.gz 'http://sourceforge.net/projects/phpmyadmin/files/phpMyAdmin/4.1.12/phpMyAdmin-4.1.12-all-languages.tar.gz/download'
+		wget -q -O phpmyadmin.tar.gz 'http://sourceforge.net/projects/phpmyadmin/files/phpMyAdmin/4.1.14/phpMyAdmin-4.1.14-all-languages.tar.gz/download'
 		tar -xf phpmyadmin.tar.gz
-		mv phpMyAdmin-4.1.12-all-languages database-admin
+		mv phpMyAdmin-4.1.14-all-languages database-admin
 		rm phpmyadmin.tar.gz
 	else
 		echo "PHPMyAdmin already installed."
@@ -540,7 +561,7 @@ for SITE_CONFIG_FILE in $(find /srv/www -maxdepth 5 -name 'vvv-init.sh'); do
 	DIR="$(dirname $SITE_CONFIG_FILE)"
 	(
 		cd $DIR
-		bash vvv-init.sh
+		source vvv-init.sh
 	)
 done
 
