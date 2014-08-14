@@ -9,4 +9,5 @@ grep -v -F "performance_schema" | \
 grep -v -F "mysql" | \
 grep -v -F "test" | \
 grep -v -F "Database" | \
+grep -v -F "step2e_nrw_dump" | \
 while read dbname; do mysqldump -uroot "$dbname" > /srv/database/backups/"$dbname".sql && echo "Database $dbname backed up..."; done
