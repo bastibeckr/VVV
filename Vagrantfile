@@ -23,6 +23,9 @@ Vagrant.configure("2") do |config|
   # established on the host machine inside the guest. See the manual for ssh-add
   config.ssh.forward_agent = true
 
+
+  config.vm.network :forwarded_port, guest: 80, host: 8888
+
   # Default Ubuntu Box
   #
   # This box is provided by Ubuntu vagrantcloud.com and is a nicely sized (332MB)
